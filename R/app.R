@@ -12,6 +12,65 @@ ui <- fluidPage(
       .validation-error { background-color: #ffcccc !important; }
       .validation-warning { background-color: #fff3cd !important; }
       .validation-ok { background-color: #d4edda !important; }
+    ")),
+    tags$script(HTML("
+      // Wait for document to be ready
+      $(document).ready(function() {
+        console.log('Document ready, setting up checkbox handlers');
+      });
+      
+      // Use change event and delegate from document
+      $(document).on('change', 'input.row-select[type=\"checkbox\"]', function(e) {
+        console.log('Checkbox changed!');
+        var checkbox = $(this);
+        var isChecked = checkbox.prop('checked');
+        var row = checkbox.closest('tr');
+        var table = checkbox.closest('table').DataTable();
+        var rowIndex = table.row(row).index();
+        
+        // Debug: Show all parent IDs
+        var allParentIds = [];
+        checkbox.parents().each(function() {
+          var id = $(this).attr('id');
+          if (id) {
+            allParentIds.push(id);
+          }
+        });
+        console.log('All parent IDs:', allParentIds);
+        
+        // Find the parent by checking all parents for specific IDs
+        var containerId = null;
+        checkbox.parents().each(function() {
+          var id = $(this).attr('id');
+          if (id === 'overview_table' || id === 'data_table') {
+            containerId = id;
+            return false; // break the loop
+          }
+        });
+        
+        console.log('Container ID:', containerId);
+        console.log('Row Index:', rowIndex);
+        console.log('Is Checked:', isChecked);
+        
+        // Send the change to Shiny based on container ID
+        if(containerId === 'overview_table') {
+          console.log('Sending to overview_checkbox_change');
+          Shiny.setInputValue('overview_checkbox_change', {
+            row: rowIndex,
+            checked: isChecked,
+            timestamp: new Date().getTime()
+          }, {priority: 'event'});
+        } else if(containerId === 'data_table') {
+          console.log('Sending to quiz_checkbox_change');
+          Shiny.setInputValue('quiz_checkbox_change', {
+            row: rowIndex,
+            checked: isChecked,
+            timestamp: new Date().getTime()
+          }, {priority: 'event'});
+        } else {
+          console.log('Container ID not recognized:', containerId);
+        }
+      });
     "))
   ),
   
@@ -347,7 +406,7 @@ server <- function(input, output, session) {
     
     datatable(
       overview,
-      editable = list(target = "cell", disable = list(columns = c(1, 2))),
+      editable = list(target = "cell", disable = list(columns = c(0, 1, 2))),
       options = list(
         pageLength = 15,
         scrollX = TRUE,
@@ -357,12 +416,24 @@ server <- function(input, output, session) {
           list(width = '40px', targets = 1),
           list(width = '100px', targets = 2),
           list(width = '150px', targets = 3:4),
-          list(width = '300px', targets = 5)
+          list(width = '300px', targets = 5),
+          list(
+            targets = 0,
+            render = JS(
+              "function(data, type, row, meta) {",
+              "  if(type === 'display'){",
+              "    return '<input type=\"checkbox\" class=\"row-select\" ' + (data ? 'checked' : '') + '>';",
+              "  }",
+              "  return data;",
+              "}"
+            )
+          )
         )
       ),
       rownames = FALSE,
       selection = 'none',
-      class = 'cell-border stripe'
+      class = 'cell-border stripe',
+      escape = FALSE
     )
   })
   
@@ -376,21 +447,34 @@ server <- function(input, output, session) {
     
     dt <- datatable(
       display_data,
-      editable = list(target = "cell", disable = list(columns = c(1, 2))),
+      editable = list(target = "cell", disable = list(columns = c(0, 1))),
       options = list(
         pageLength = 15,
         scrollX = TRUE,
         columnDefs = list(
-          list(width = '30px', targets = 0),
-          list(width = '30px', targets = 1),
+          list(width = '40px', targets = 0),
+          list(width = '40px', targets = 1),
           list(width = '300px', targets = 2),
           list(width = '150px', targets = 3:6),
-          list(width = '80px', targets = 7:8)
+          list(width = '80px', targets = 7:8),
+          list(className = 'dt-center', targets = 0:1),
+          list(
+            targets = 0,
+            render = JS(
+              "function(data, type, row, meta) {",
+              "  if(type === 'display'){",
+              "    return '<input type=\"checkbox\" class=\"row-select\" ' + (data ? 'checked' : '') + '>';",
+              "  }",
+              "  return data;",
+              "}"
+            )
+          )
         )
       ),
       rownames = FALSE,
       selection = 'none',
-      class = 'cell-border stripe'
+      class = 'cell-border stripe',
+      escape = FALSE
     )
     
     # Apply validation styling
@@ -410,12 +494,46 @@ server <- function(input, output, session) {
     dt
   })
   
+  # Handle checkbox changes in overview table
+  observeEvent(input$overview_checkbox_change, {
+    req(filtered_data())
+    info <- input$overview_checkbox_change
+    data <- filtered_data()
+    
+    cat("Overview checkbox changed - Row:", info$row + 1, "Checked:", info$checked, "\n")
+    
+    data$Selected[info$row + 1] <- info$checked  # +1 for R indexing
+    filtered_data(data)
+    quiz_data(data)
+    
+    cat("Selected count:", sum(data$Selected), "\n")
+  })
+  
+  # Handle checkbox changes in quiz table
+  observeEvent(input$quiz_checkbox_change, {
+    req(quiz_data())
+    info <- input$quiz_checkbox_change
+    data <- quiz_data()
+    
+    cat("Quiz checkbox changed - Row:", info$row + 1, "Checked:", info$checked, "\n")
+    
+    data$Selected[info$row + 1] <- info$checked  # +1 for R indexing
+    quiz_data(data)
+    filtered_data(data)
+    
+    cat("Selected count:", sum(data$Selected), "\n")
+  })
+  
   # Handle cell edits in overview
   observeEvent(input$overview_table_cell_edit, {
     info <- input$overview_table_cell_edit
     data <- filtered_data()
     
     col_name <- colnames(data)[info$col + 1]
+    
+    # Skip if it's the Selected column (handled by checkbox)
+    if (col_name == "Selected") return()
+    
     data[info$row, col_name] <- info$value
     
     filtered_data(data)
@@ -431,12 +549,10 @@ server <- function(input, output, session) {
                       "Answer_3", "Answer_4", "Time_Limit", "Correct")
     col_name <- display_cols[info$col + 1]
     
-    # Handle checkbox for Selected column
-    if (col_name == "Selected") {
-      data[info$row, col_name] <- as.logical(info$value)
-    } else {
-      data[info$row, col_name] <- info$value
-    }
+    # Skip if it's the Selected column (handled by checkbox)
+    if (col_name == "Selected") return()
+    
+    data[info$row, col_name] <- info$value
     
     quiz_data(data)
     filtered_data(data)
@@ -451,11 +567,18 @@ server <- function(input, output, session) {
       req(quiz_data())
       
       tryCatch({
+        # Get the current data state
         data <- quiz_data()
+        
+        # Debug: Show selection status
+        cat("Total rows:", nrow(data), "\n")
+        cat("Selected rows:", sum(data$Selected), "\n")
+        cat("Export selected only:", input$export_selected_only, "\n")
         
         # Filter to selected rows if checkbox is checked
         if (input$export_selected_only) {
-          data <- data[data$Selected, ]
+          data <- data[data$Selected == TRUE, ]
+          cat("After filtering:", nrow(data), "\n")
         }
         
         if (nrow(data) == 0) {
