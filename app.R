@@ -1,3 +1,10 @@
+# Workaround for Chromium Issue 468227
+downloadButton <- function(...) {
+  tag <- shiny::downloadButton(...)
+  tag$attribs$download <- NULL
+  tag
+}
+
 library(shiny)
 library(DT)
 library(openxlsx)
