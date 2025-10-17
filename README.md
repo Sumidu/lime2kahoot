@@ -1,0 +1,10 @@
+
+<!-- README.md is generated from README.Rmd. Please edit that file -->
+
+# lime2kahoot
+
+<!-- badges: start -->
+
+<!-- badges: end -->
+
+The goal of lime2kahoot is to convert a lime survey into a kahoot quiz.
