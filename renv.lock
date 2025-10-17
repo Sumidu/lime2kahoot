@@ -11,19 +11,20 @@
   "Packages": {
     "DT": {
       "Package": "DT",
-      "Version": "0.34.0",
+      "Version": "0.33",
       "Source": "Repository",
-      "Repository": "CRAN",
+      "Repository": "RSPM",
       "Requirements": [
         "crosstalk",
         "htmltools",
         "htmlwidgets",
+        "httpuv",
         "jquerylib",
         "jsonlite",
         "magrittr",
         "promises"
       ],
-      "Hash": "a9d00f59f9c7e613dd4c3e0d27135a03"
+      "Hash": "64ff3427f559ce3f2597a4fe13255cb6"
     },
     "R6": {
       "Package": "R6",
@@ -173,6 +174,18 @@
         "R"
       ],
       "Hash": "94cf2c54237f6841cee68e3ba4ab5a14"
+    },
+    "fansi": {
+      "Package": "fansi",
+      "Version": "1.0.6",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "grDevices",
+        "utils"
+      ],
+      "Hash": "962174cf2aeb5b9eea581522286a911f"
     },
     "fastmap": {
       "Package": "fastmap",
@@ -416,9 +429,9 @@
     },
     "pillar": {
       "Package": "pillar",
-      "Version": "1.11.1",
+      "Version": "1.10.2",
       "Source": "Repository",
-      "Repository": "CRAN",
+      "Repository": "RSPM",
       "Requirements": [
         "cli",
         "glue",
@@ -428,7 +441,7 @@
         "utils",
         "vctrs"
       ],
-      "Hash": "1395e64f2689ffd503657778e810cee2"
+      "Hash": "1098920a19b5cd5a15bacdc74a89979d"
     },
     "pkgconfig": {
       "Package": "pkgconfig",
@@ -489,9 +502,9 @@
     },
     "rmarkdown": {
       "Package": "rmarkdown",
-      "Version": "2.30",
+      "Version": "2.29",
       "Source": "Repository",
-      "Repository": "CRAN",
+      "Repository": "RSPM",
       "Requirements": [
         "R",
         "bslib",
@@ -508,7 +521,7 @@
         "xfun",
         "yaml"
       ],
-      "Hash": "efe19db0fde0fff13cea7eec6f695021"
+      "Hash": "df99277f63d01c34e95e3d2f06a79736"
     },
     "sass": {
       "Package": "sass",
@@ -582,12 +595,12 @@
     },
     "tibble": {
       "Package": "tibble",
-      "Version": "3.3.0",
+      "Version": "3.2.1",
       "Source": "Repository",
-      "Repository": "CRAN",
+      "Repository": "RSPM",
       "Requirements": [
         "R",
-        "cli",
+        "fansi",
         "lifecycle",
         "magrittr",
         "methods",
@@ -597,7 +610,7 @@
         "utils",
         "vctrs"
       ],
-      "Hash": "784b27d0801c3829de602105757b2cd7"
+      "Hash": "a84e2cc86d07289b3b6f5069df7a004c"
     },
     "tidyselect": {
       "Package": "tidyselect",
@@ -674,16 +687,16 @@
     },
     "xfun": {
       "Package": "xfun",
-      "Version": "0.53",
+      "Version": "0.52",
       "Source": "Repository",
-      "Repository": "CRAN",
+      "Repository": "RSPM",
       "Requirements": [
         "R",
         "grDevices",
         "stats",
         "tools"
       ],
-      "Hash": "1befe97a0d56060b3964e3986d408df9"
+      "Hash": "652ce36fe7d57688e6786819b09d9190"
     },
     "xtable": {
       "Package": "xtable",
