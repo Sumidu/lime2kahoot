@@ -7,6 +7,10 @@ library(readr)
 library(lubridate)
 library(purrr)
 library(stringr)
+library(logging)
+
+# Initialize logging
+basicConfig(level = "INFO")
 
 ui <- fluidPage(
   titlePanel("LimeSurvey to Kahoot Quiz Converter"),
@@ -211,11 +215,14 @@ server <- function(input, output, session) {
   # Process uploaded CSV
   observeEvent(input$csv_file, {
     req(input$csv_file)
-    
+
+    loginfo("Processing uploaded CSV file: %s", input$csv_file$name)
+
     tryCatch({
       df <- read_csv(input$csv_file$datapath,
                      locale = locale(encoding = "UTF-8"),
                      show_col_types = FALSE)
+      loginfo("Successfully loaded CSV with %d rows and %d columns", nrow(df), ncol(df))
 
       find_column <- function(patterns) {
         result <- patterns %>%
@@ -223,8 +230,10 @@ server <- function(input, output, session) {
           detect(~ length(.x) > 0)
 
         if (!is.null(result) && length(result) > 0) {
+          loginfo("Found column matching: %s", result[1])
           return(result[1])
         }
+        logwarn("Could not find column matching any pattern: %s", str_c(patterns, collapse = ", "))
         return(NA_character_)
       }
       
@@ -248,18 +257,26 @@ server <- function(input, output, session) {
         pull(name)
 
       if (length(missing_cols) > 0) {
-        stop(str_c("Could not find columns: ", str_c(missing_cols, collapse = ", ")))
+        error_msg <- str_c("Could not find required columns: ", str_c(missing_cols, collapse = ", "))
+        logerror(error_msg)
+        stop(error_msg)
       }
+      loginfo("All required columns found successfully")
       
       # Parse dates and create clean data with pipes
+      loginfo("Starting data transformation and cleaning")
       clean_data <- df %>%
         mutate(
           ParsedDate = if (!is.na(date_col)) {
             tryCatch(
               as.Date(parse_date_time(.data[[date_col]], orders = c("ymd HMS", "dmy HMS", "mdy HMS"))),
-              error = function(e) Sys.Date()
+              error = function(e) {
+                logwarn("Date parsing failed: %s. Using current date.", e$message)
+                Sys.Date()
+              }
             )
           } else {
+            loginfo("No date column found, using current date")
             Sys.Date()
           }
         ) %>%
@@ -279,7 +296,9 @@ server <- function(input, output, session) {
         filter(!is.na(Question), str_trim(Question) != "")
       
       if (nrow(clean_data) == 0) {
-        stop("No valid questions found in the CSV file")
+        error_msg <- "No valid questions found in the CSV file"
+        logerror(error_msg)
+        stop(error_msg)
       }
 
       clean_data <- clean_data %>%
@@ -290,9 +309,11 @@ server <- function(input, output, session) {
           Selected = TRUE,
           Nr = row_number()
         )
-      
+
+      loginfo("Data cleaning complete. Total questions: %d", nrow(clean_data))
+
       raw_data(clean_data)
-      
+
       updateDateInput(session, "start_date", value = Sys.Date() - 7)
       updateDateInput(session, "end_date", value = Sys.Date())
 
@@ -302,13 +323,15 @@ server <- function(input, output, session) {
 
       filtered_data(filtered)
       quiz_data(filtered)
-      
-      showNotification(paste("Loaded", nrow(clean_data), "total questions,", 
-                             nrow(filtered), "in date range"), 
+
+      loginfo("Loaded %d total questions, %d in default date range", nrow(clean_data), nrow(filtered))
+      showNotification(paste("Loaded", nrow(clean_data), "total questions,",
+                             nrow(filtered), "in date range"),
                        type = "message", duration = 3)
       
     }, error = function(e) {
-      showNotification(paste("Error reading CSV:", e$message), 
+      logerror("Error processing CSV file: %s", e$message)
+      showNotification(paste("Error reading CSV:", e$message),
                        type = "error", duration = NULL)
     })
   })
@@ -316,14 +339,16 @@ server <- function(input, output, session) {
   # Process participants file
   observeEvent(input$participants_file, {
     req(input$participants_file)
-    
+
+    loginfo("Processing uploaded participants file: %s", input$participants_file$name)
+
     tryCatch({
       participants <- read_csv(input$participants_file$datapath,
                                locale = locale(encoding = "UTF-8"),
                                show_col_types = FALSE)
 
-      cat("Participants file columns:\n")
-      print(colnames(participants))
+      loginfo("Successfully loaded participants CSV with %d rows and %d columns", nrow(participants), ncol(participants))
+      logdebug("Participants file columns: %s", str_c(colnames(participants), collapse = ", "))
 
       find_column <- function(patterns) {
         result <- patterns %>%
@@ -331,9 +356,10 @@ server <- function(input, output, session) {
           detect(~ length(.x) > 0)
 
         if (!is.null(result) && length(result) > 0) {
-          cat("Found column matching: ", result[1], "\n", sep = "")
+          loginfo("Found column matching: %s", result[1])
           return(result[1])
         }
+        logwarn("Could not find column matching any pattern: %s", str_c(patterns, collapse = ", "))
         return(NA_character_)
       }
       
@@ -342,11 +368,13 @@ server <- function(input, output, session) {
                                  "gruppe", "Group", "Team"))
       
       if (is.na(group_col)) {
-        available_cols <- paste(colnames(participants), collapse = ", ")
-        stop(paste("Could not find group name column. Looking for patterns like: Group Name, GroupName, Gruppenname.\n\nAvailable columns:", available_cols))
+        available_cols <- str_c(colnames(participants), collapse = ", ")
+        error_msg <- str_c("Could not find group name column. Looking for patterns like: Group Name, GroupName, Gruppenname.\n\nAvailable columns: ", available_cols)
+        logerror(error_msg)
+        stop(error_msg)
       }
-      
-      cat("Using Group Name column:", group_col, "\n")
+
+      loginfo("Using Group Name column: %s", group_col)
       
       # Find all member ID columns (Member 1 ID Number, Member 2 ID Number, etc.)
       member_id_cols <- grep("Member.*ID.*Number|Member.*ID|Student.*ID", 
@@ -363,12 +391,13 @@ server <- function(input, output, session) {
       }
       
       if (length(member_id_cols) == 0) {
-        available_cols <- paste(colnames(participants), collapse = ", ")
-        stop(paste("Could not find member ID columns. Looking for patterns like: Member 1 ID Number, Member 2 ID Number.\n\nAvailable columns:", available_cols))
+        available_cols <- str_c(colnames(participants), collapse = ", ")
+        error_msg <- str_c("Could not find member ID columns. Looking for patterns like: Member 1 ID Number, Member 2 ID Number.\n\nAvailable columns: ", available_cols)
+        logerror(error_msg)
+        stop(error_msg)
       }
-      
-      cat("Found", length(member_id_cols), "member ID columns:\n")
-      print(member_id_cols)
+
+      loginfo("Found %d member ID columns: %s", length(member_id_cols), str_c(member_id_cols, collapse = ", "))
 
       # Pivot longer: create one row per participant using tidyverse
       clean_participants <- participants %>%
@@ -390,19 +419,19 @@ server <- function(input, output, session) {
         select(Matrikelnummer, Gruppenname) %>%
         distinct()
       
-      cat("Pivoted data: ", nrow(clean_participants), "participants from", 
-          nrow(participants), "groups\n")
-      cat("Sample:\n")
-      print(head(clean_participants, 5))
-      
+      loginfo("Successfully pivoted data: %d participants from %d groups", nrow(clean_participants), nrow(participants))
+      logdebug("Sample participants data (first 5 rows): %s",
+               str_c(capture.output(print(head(clean_participants, 5))), collapse = "\n"))
+
       participants_data(clean_participants)
-      
-      showNotification(paste("Loaded", nrow(clean_participants), "participants from", 
-                             nrow(participants), "groups"), 
+
+      showNotification(paste("Loaded", nrow(clean_participants), "participants from",
+                             nrow(participants), "groups"),
                        type = "message", duration = 3)
-      
+
     }, error = function(e) {
-      showNotification(paste("Error reading participants file:", e$message), 
+      logerror("Error processing participants file: %s", e$message)
+      showNotification(paste("Error reading participants file:", e$message),
                        type = "error", duration = NULL)
     })
   })
@@ -443,6 +472,8 @@ server <- function(input, output, session) {
   observeEvent(input$apply_filter, {
     req(raw_data())
 
+    loginfo("Applying date filter: %s to %s", input$start_date, input$end_date)
+
     filtered <- raw_data() %>%
       filter(
         SubmitDate >= input$start_date,
@@ -451,14 +482,16 @@ server <- function(input, output, session) {
       mutate(Nr = row_number())
 
     if (nrow(filtered) == 0) {
+      logwarn("No data found in selected date range: %s to %s", input$start_date, input$end_date)
       showNotification("No data in selected date range", type = "warning")
       return()
     }
 
     filtered_data(filtered)
     quiz_data(filtered)
-    
-    showNotification(paste("Filtered to", nrow(filtered), "questions"), 
+
+    loginfo("Date filter applied: %d questions in range", nrow(filtered))
+    showNotification(paste("Filtered to", nrow(filtered), "questions"),
                      type = "message", duration = 2)
   })
   
@@ -721,66 +754,72 @@ server <- function(input, output, session) {
     req(filtered_data())
     info <- input$overview_checkbox_change
     data <- filtered_data()
-    
-    cat("Overview checkbox changed - Row:", info$row + 1, "Checked:", info$checked, "\n")
-    
+
+    logdebug("Overview checkbox changed - Row: %d, Checked: %s", info$row + 1, info$checked)
+
     data$Selected[info$row + 1] <- info$checked
     filtered_data(data)
     quiz_data(data)
-    
-    cat("Selected count:", sum(data$Selected), "\n")
+
+    loginfo("Updated selection - %d questions selected", sum(data$Selected))
   })
-  
+
   observeEvent(input$quiz_checkbox_change, {
     req(quiz_data())
     info <- input$quiz_checkbox_change
     data <- quiz_data()
-    
-    cat("Quiz checkbox changed - Row:", info$row + 1, "Checked:", info$checked, "\n")
-    
+
+    logdebug("Quiz checkbox changed - Row: %d, Checked: %s", info$row + 1, info$checked)
+
     data$Selected[info$row + 1] <- info$checked
     quiz_data(data)
     filtered_data(data)
-    
-    cat("Selected count:", sum(data$Selected), "\n")
+
+    loginfo("Updated selection - %d questions selected", sum(data$Selected))
   })
   
   # Handle cell edits
   observeEvent(input$overview_table_cell_edit, {
     info <- input$overview_table_cell_edit
     data <- filtered_data()
-    
+
     col_name <- colnames(data)[info$col + 1]
-    
+
     if (col_name == "Selected") return()
-    
+
+    logdebug("Overview table cell edited - Row: %d, Column: %s, New value: %s", info$row, col_name, info$value)
+
     data[info$row, col_name] <- info$value
-    
+
     filtered_data(data)
     quiz_data(data)
   })
-  
+
   observeEvent(input$data_table_cell_edit, {
     info <- input$data_table_cell_edit
     data <- quiz_data()
-    
-    display_cols <- c("Selected", "Nr", "Question", "Answer_1", "Answer_2", 
+
+    display_cols <- c("Selected", "Nr", "Question", "Answer_1", "Answer_2",
                       "Answer_3", "Answer_4", "Time_Limit", "Correct", "Points")
     col_name <- display_cols[info$col + 1]
-    
+
     if (col_name == "Selected") return()
-    
+
+    logdebug("Quiz table cell edited - Row: %d, Column: %s, New value: %s", info$row, col_name, info$value)
+
     if (col_name == "Points") {
       val <- as.numeric(info$value)
       if (is.na(val) || !val %in% c(0, 0.5, 1)) {
+        logwarn("Invalid points value attempted: %s (must be 0, 0.5, or 1)", info$value)
         showNotification("Points must be 0, 0.5, or 1", type = "warning", duration = 2)
         return()
       }
       data[info$row, col_name] <- val
+      loginfo("Points updated for row %d: %s", info$row, val)
     } else {
       data[info$row, col_name] <- info$value
     }
-    
+
     quiz_data(data)
     filtered_data(data)
   })
@@ -793,32 +832,35 @@ server <- function(input, output, session) {
     content = function(file) {
       req(quiz_data())
       
+      loginfo("Starting Excel export")
+
       tryCatch({
         data <- quiz_data()
 
-        cat("Total rows:", nrow(data), "\n")
-        cat("Selected rows:", sum(data$Selected), "\n")
-        cat("Export selected only:", input$export_selected_only, "\n")
+        loginfo("Total rows: %d, Selected rows: %d, Export selected only: %s",
+                nrow(data), sum(data$Selected), input$export_selected_only)
 
         if (input$export_selected_only) {
           data <- data %>% filter(Selected == TRUE)
-          cat("After filtering:", nrow(data), "\n")
+          loginfo("After filtering for selected only: %d rows", nrow(data))
         }
-        
+
         if (nrow(data) == 0) {
+          logerror("Export failed: No rows selected for export")
           showNotification("No rows selected for export", type = "error")
           return()
         }
-        
+
         # Check for validation errors using functional approach
         has_errors <- data %>%
           split(1:nrow(.)) %>%
           map(validate_row) %>%
           map(~ any(unlist(.) == "error")) %>%
           any()
-        
+
         if (has_errors) {
-          showNotification("Warning: Some rows have validation errors.", 
+          logwarn("Export contains rows with validation errors")
+          showNotification("Warning: Some rows have validation errors.",
                            type = "warning", duration = 5)
         }
         
@@ -869,12 +911,14 @@ server <- function(input, output, session) {
         setColWidths(wb, sheet = 1, cols = 8, widths = 33)
         
         saveWorkbook(wb, file, overwrite = TRUE)
-        
-        showNotification(paste("Excel file created with", nrow(data), "questions!"), 
+
+        loginfo("Excel file successfully created with %d questions", nrow(data))
+        showNotification(paste("Excel file created with", nrow(data), "questions!"),
                          type = "message", duration = 3)
-        
+
       }, error = function(e) {
-        showNotification(paste("Error creating Excel:", e$message), 
+        logerror("Error creating Excel file: %s", e$message)
+        showNotification(paste("Error creating Excel:", e$message),
                          type = "error", duration = NULL)
       })
     }
@@ -886,17 +930,29 @@ server <- function(input, output, session) {
     },
     content = function(file) {
       req(participant_scores())
-      
-      scores <- participant_scores()
-      
-      export_data <- data.frame(
-        Matrikelnummer = scores$Matrikelnummer,
-        Score = scores$Score
-      )
-      
-      write.csv(export_data, file, row.names = FALSE, fileEncoding = "UTF-8")
-      
-      showNotification("Grades CSV downloaded!", type = "message", duration = 2)
+
+      loginfo("Starting grades CSV export")
+
+      tryCatch({
+        scores <- participant_scores()
+
+        loginfo("Exporting grades for %d participants", nrow(scores))
+
+        export_data <- data.frame(
+          Matrikelnummer = scores$Matrikelnummer,
+          Score = scores$Score
+        )
+
+        write.csv(export_data, file, row.names = FALSE, fileEncoding = "UTF-8")
+
+        loginfo("Grades CSV successfully created with %d records", nrow(export_data))
+        showNotification("Grades CSV downloaded!", type = "message", duration = 2)
+
+      }, error = function(e) {
+        logerror("Error creating grades CSV: %s", e$message)
+        showNotification(paste("Error creating grades CSV:", e$message),
+                         type = "error", duration = NULL)
+      })
     }
   )
 }
