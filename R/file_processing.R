@@ -6,25 +6,28 @@ library(dplyr)
 library(tidyr)
 library(readr)
 library(lubridate)
+library(purrr)
+library(stringr)
 
 # Function to find column by pattern matching
 find_column <- function(df, patterns) {
-  for (pattern in patterns) {
-    matches <- grep(pattern, colnames(df), ignore.case = TRUE, value = TRUE)
-    if (length(matches) > 0) {
-      cat("Found column matching '", pattern, "': ", matches[1], "\n", sep = "")
-      return(matches[1])
-    }
+  result <- patterns %>%
+    map(~ str_subset(colnames(df), regex(.x, ignore_case = TRUE))) %>%
+    detect(~ length(.x) > 0)
+
+  if (!is.null(result) && length(result) > 0) {
+    cat("Found column matching: ", result[1], "\n", sep = "")
+    return(result[1])
   }
-  return(NA)
+  return(NA_character_)
 }
 
 # Process LimeSurvey quiz CSV
 process_quiz_csv <- function(filepath) {
   cat("\n=== Processing Quiz CSV ===\n")
   
-  df <- read.csv(filepath, stringsAsFactors = FALSE, 
-                 fileEncoding = "UTF-8", check.names = TRUE)
+  df <- read_csv(filepath, locale = locale(encoding = "UTF-8"),
+                 show_col_types = FALSE)
   
   cat("Original columns:\n")
   print(colnames(df))
@@ -42,66 +45,59 @@ process_quiz_csv <- function(filepath) {
   correct_col <- find_column(df, c("korrekte\\.Antwort", "Correct"))
   
   # Check for missing columns
-  missing_cols <- c()
-  if (is.na(question_col)) missing_cols <- c(missing_cols, "Question")
-  if (is.na(answer_a_col)) missing_cols <- c(missing_cols, "Answer A")
-  if (is.na(answer_b_col)) missing_cols <- c(missing_cols, "Answer B")
-  if (is.na(answer_c_col)) missing_cols <- c(missing_cols, "Answer C")
-  if (is.na(answer_d_col)) missing_cols <- c(missing_cols, "Answer D")
-  if (is.na(correct_col)) missing_cols <- c(missing_cols, "Correct Answer")
-  
-  if (length(missing_cols) > 0) {
-    stop(paste("Could not find columns:", paste(missing_cols, collapse = ", ")))
-  }
-  
-  # Parse dates
-  if (!is.na(date_col)) {
-    tryCatch({
-      df$ParsedDate <- as.Date(parse_date_time(df[[date_col]], 
-                                               orders = c("ymd HMS", "dmy HMS", "mdy HMS")))
-    }, error = function(e) {
-      df$ParsedDate <- Sys.Date()
-    })
-  } else {
-    df$ParsedDate <- Sys.Date()
-  }
-  
-  # Create clean data
-  clean_data <- data.frame(
-    SubmitDate = df$ParsedDate,
-    GroupName = if (!is.na(group_col)) as.character(df[[group_col]]) else "",
-    Password = if (!is.na(password_col)) as.character(df[[password_col]]) else "",
-    Question = as.character(df[[question_col]]),
-    Answer_1 = as.character(df[[answer_a_col]]),
-    Answer_2 = as.character(df[[answer_b_col]]),
-    Answer_3 = as.character(df[[answer_c_col]]),
-    Answer_4 = as.character(df[[answer_d_col]]),
-    Time_Limit = rep(60, nrow(df)),
-    Correct = as.character(df[[correct_col]]),
-    Points = rep(1, nrow(df)),
-    stringsAsFactors = FALSE
+  required_cols <- tibble(
+    name = c("Question", "Answer A", "Answer B", "Answer C", "Answer D", "Correct Answer"),
+    col = list(question_col, answer_a_col, answer_b_col, answer_c_col, answer_d_col, correct_col)
   )
+
+  missing_cols <- required_cols %>%
+    filter(map_lgl(col, is.na)) %>%
+    pull(name)
+
+  if (length(missing_cols) > 0) {
+    stop(str_c("Could not find columns: ", str_c(missing_cols, collapse = ", ")))
+  }
   
-  # Remove empty rows
-  clean_data <- clean_data[!is.na(clean_data$Question) & 
-                             trimws(clean_data$Question) != "", ]
+  # Parse dates and create clean data with pipes
+  clean_data <- df %>%
+    mutate(
+      ParsedDate = if (!is.na(date_col)) {
+        tryCatch(
+          as.Date(parse_date_time(.data[[date_col]], orders = c("ymd HMS", "dmy HMS", "mdy HMS"))),
+          error = function(e) Sys.Date()
+        )
+      } else {
+        Sys.Date()
+      }
+    ) %>%
+    transmute(
+      SubmitDate = ParsedDate,
+      GroupName = if (!is.na(group_col)) as.character(.data[[group_col]]) else "",
+      Password = if (!is.na(password_col)) as.character(.data[[password_col]]) else "",
+      Question = as.character(.data[[question_col]]),
+      Answer_1 = as.character(.data[[answer_a_col]]),
+      Answer_2 = as.character(.data[[answer_b_col]]),
+      Answer_3 = as.character(.data[[answer_c_col]]),
+      Answer_4 = as.character(.data[[answer_d_col]]),
+      Time_Limit = 60,
+      Correct = as.character(.data[[correct_col]]),
+      Points = 1
+    )
   
-  # Convert letter answers to numbers
-  clean_data$Correct <- gsub("A", "1", clean_data$Correct)
-  clean_data$Correct <- gsub("B", "2", clean_data$Correct)
-  clean_data$Correct <- gsub("C", "3", clean_data$Correct)
-  clean_data$Correct <- gsub("D", "4", clean_data$Correct)
-  
-  # Replace NA with empty strings
-  clean_data[is.na(clean_data)] <- ""
-  
-  # Add selection and number columns
-  clean_data$Selected <- TRUE
-  clean_data$Nr <- seq_len(nrow(clean_data))
+  # Remove empty rows, convert letter answers, and add columns
+  clean_data <- clean_data %>%
+    filter(!is.na(Question), str_trim(Question) != "") %>%
+    mutate(
+      Correct = Correct %>%
+        str_replace_all(c("A" = "1", "B" = "2", "C" = "3", "D" = "4")),
+      across(everything(), ~ if_else(is.na(.), "", as.character(.))),
+      Selected = TRUE,
+      Nr = row_number()
+    )
   
   cat("Processed", nrow(clean_data), "quiz questions\n")
   cat("\nSample data:\n")
-  print(head(clean_data[, c("Nr", "GroupName", "Question", "Points")], 3))
+  print(clean_data %>% select(Nr, GroupName, Question, Points) %>% head(3))
   
   return(clean_data)
 }
@@ -110,30 +106,26 @@ process_quiz_csv <- function(filepath) {
 process_participants_csv <- function(filepath) {
   # filepath <- "data/groups.csv" # for debugging
   cat("\n=== Processing Participants CSV ===\n")
-  
-  participants <- readr::read_csv(filepath)
-  # remove rows with zero participants (Group Size column is 0)
-  participants %>% filter(`Group Size` != 0) %>% 
-    select(-c(`Group Description`, starts_with("Assigned"))) %>% 
-    select(c(`Group Name`, ends_with("ID Number"))) %>% 
+
+  participants <- read_csv(filepath, show_col_types = FALSE)
+
+  cat("Original columns:\n")
+  print(colnames(participants))
+  cat("\nNumber of rows (groups):", nrow(participants), "\n\n")
+
+  # Remove rows with zero participants and pivot to long format
+  clean_participants <- participants %>%
+    filter(`Group Size` != 0) %>%
+    select(-c(`Group Description`, starts_with("Assigned"))) %>%
+    select(`Group Name`, ends_with("ID Number")) %>%
     pivot_longer(
       cols = starts_with("Member") | starts_with("Student"),
       names_to = "Member_Column",
       values_to = "Matrikelnummer"
-    ) %>% 
-    mutate(Member_Column = as.numeric(gsub(".*?(\\d+).*", "\\1", Member_Column))) %>% 
-    na.omit() -> clean_participants
-  
-  
-  cat("Original columns:\n")
-  print(colnames(participants))
-  cat("\nNumber of rows (groups):", nrow(participants), "\n\n")
-  
-  # Find group name column
-  
-  
-  # Remove duplicates
-  clean_participants <- unique(clean_participants)
+    ) %>%
+    mutate(Member_Column = as.numeric(str_extract(Member_Column, "\\d+"))) %>%
+    drop_na() %>%
+    distinct()
   
   cat("\n=== Summary ===\n")
   cat("Total groups:", nrow(participants), "\n")

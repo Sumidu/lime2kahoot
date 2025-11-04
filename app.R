@@ -2,7 +2,11 @@ library(shiny)
 library(DT)
 library(openxlsx)
 library(dplyr)
+library(tidyr)
+library(readr)
 library(lubridate)
+library(purrr)
+library(stringr)
 
 ui <- fluidPage(
   titlePanel("LimeSurvey to Kahoot Quiz Converter"),
@@ -209,15 +213,19 @@ server <- function(input, output, session) {
     req(input$csv_file)
     
     tryCatch({
-      df <- read.csv(input$csv_file$datapath, stringsAsFactors = FALSE, 
-                     fileEncoding = "UTF-8", check.names = TRUE)
-      
+      df <- read_csv(input$csv_file$datapath,
+                     locale = locale(encoding = "UTF-8"),
+                     show_col_types = FALSE)
+
       find_column <- function(patterns) {
-        for (pattern in patterns) {
-          matches <- grep(pattern, colnames(df), ignore.case = TRUE, value = TRUE)
-          if (length(matches) > 0) return(matches[1])
+        result <- patterns %>%
+          map(~ str_subset(colnames(df), regex(.x, ignore_case = TRUE))) %>%
+          detect(~ length(.x) > 0)
+
+        if (!is.null(result) && length(result) > 0) {
+          return(result[1])
         }
-        return(NA)
+        return(NA_character_)
       }
       
       date_col <- find_column(c("Datum\\.Abgeschickt", "Date", "Submitted"))
@@ -230,69 +238,68 @@ server <- function(input, output, session) {
       answer_d_col <- find_column(c("Antwort\\.D", "Answer.*D"))
       correct_col <- find_column(c("korrekte\\.Antwort", "Correct"))
       
-      missing_cols <- c()
-      if (is.na(question_col)) missing_cols <- c(missing_cols, "Question")
-      if (is.na(answer_a_col)) missing_cols <- c(missing_cols, "Answer A")
-      if (is.na(answer_b_col)) missing_cols <- c(missing_cols, "Answer B")
-      if (is.na(answer_c_col)) missing_cols <- c(missing_cols, "Answer C")
-      if (is.na(answer_d_col)) missing_cols <- c(missing_cols, "Answer D")
-      if (is.na(correct_col)) missing_cols <- c(missing_cols, "Correct Answer")
-      
-      if (length(missing_cols) > 0) {
-        stop(paste("Could not find columns:", paste(missing_cols, collapse = ", ")))
-      }
-      
-      if (!is.na(date_col)) {
-        tryCatch({
-          df$ParsedDate <- as.Date(parse_date_time(df[[date_col]], 
-                                                   orders = c("ymd HMS", "dmy HMS", "mdy HMS")))
-        }, error = function(e) {
-          df$ParsedDate <- Sys.Date()
-        })
-      } else {
-        df$ParsedDate <- Sys.Date()
-      }
-      
-      clean_data <- data.frame(
-        SubmitDate = df$ParsedDate,
-        GroupName = if (!is.na(group_col)) as.character(df[[group_col]]) else "",
-        Password = if (!is.na(password_col)) as.character(df[[password_col]]) else "",
-        Question = as.character(df[[question_col]]),
-        Answer_1 = as.character(df[[answer_a_col]]),
-        Answer_2 = as.character(df[[answer_b_col]]),
-        Answer_3 = as.character(df[[answer_c_col]]),
-        Answer_4 = as.character(df[[answer_d_col]]),
-        Time_Limit = rep(60, nrow(df)),
-        Correct = as.character(df[[correct_col]]),
-        Points = rep(1, nrow(df)),
-        stringsAsFactors = FALSE
+      required_cols <- tibble(
+        name = c("Question", "Answer A", "Answer B", "Answer C", "Answer D", "Correct Answer"),
+        col = list(question_col, answer_a_col, answer_b_col, answer_c_col, answer_d_col, correct_col)
       )
+
+      missing_cols <- required_cols %>%
+        filter(map_lgl(col, is.na)) %>%
+        pull(name)
+
+      if (length(missing_cols) > 0) {
+        stop(str_c("Could not find columns: ", str_c(missing_cols, collapse = ", ")))
+      }
       
-      clean_data <- clean_data[!is.na(clean_data$Question) & 
-                                 trimws(clean_data$Question) != "", ]
+      # Parse dates and create clean data with pipes
+      clean_data <- df %>%
+        mutate(
+          ParsedDate = if (!is.na(date_col)) {
+            tryCatch(
+              as.Date(parse_date_time(.data[[date_col]], orders = c("ymd HMS", "dmy HMS", "mdy HMS"))),
+              error = function(e) Sys.Date()
+            )
+          } else {
+            Sys.Date()
+          }
+        ) %>%
+        transmute(
+          SubmitDate = ParsedDate,
+          GroupName = if (!is.na(group_col)) as.character(.data[[group_col]]) else "",
+          Password = if (!is.na(password_col)) as.character(.data[[password_col]]) else "",
+          Question = as.character(.data[[question_col]]),
+          Answer_1 = as.character(.data[[answer_a_col]]),
+          Answer_2 = as.character(.data[[answer_b_col]]),
+          Answer_3 = as.character(.data[[answer_c_col]]),
+          Answer_4 = as.character(.data[[answer_d_col]]),
+          Time_Limit = 60,
+          Correct = as.character(.data[[correct_col]]),
+          Points = 1
+        ) %>%
+        filter(!is.na(Question), str_trim(Question) != "")
       
       if (nrow(clean_data) == 0) {
         stop("No valid questions found in the CSV file")
       }
-      
-      clean_data$Correct <- gsub("A", "1", clean_data$Correct)
-      clean_data$Correct <- gsub("B", "2", clean_data$Correct)
-      clean_data$Correct <- gsub("C", "3", clean_data$Correct)
-      clean_data$Correct <- gsub("D", "4", clean_data$Correct)
-      
-      clean_data[is.na(clean_data)] <- ""
-      
-      clean_data$Selected <- TRUE
-      clean_data$Nr <- seq_len(nrow(clean_data))
+
+      clean_data <- clean_data %>%
+        mutate(
+          Correct = Correct %>%
+            str_replace_all(c("A" = "1", "B" = "2", "C" = "3", "D" = "4")),
+          across(everything(), ~ if_else(is.na(.), "", as.character(.))),
+          Selected = TRUE,
+          Nr = row_number()
+        )
       
       raw_data(clean_data)
       
       updateDateInput(session, "start_date", value = Sys.Date() - 7)
       updateDateInput(session, "end_date", value = Sys.Date())
-      
-      filtered <- clean_data[clean_data$SubmitDate >= (Sys.Date() - 7) & 
-                               clean_data$SubmitDate <= Sys.Date(), ]
-      filtered$Nr <- seq_len(nrow(filtered))
+
+      filtered <- clean_data %>%
+        filter(SubmitDate >= (Sys.Date() - 7), SubmitDate <= Sys.Date()) %>%
+        mutate(Nr = row_number())
+
       filtered_data(filtered)
       quiz_data(filtered)
       
@@ -311,23 +318,23 @@ server <- function(input, output, session) {
     req(input$participants_file)
     
     tryCatch({
-      participants <- read.csv(input$participants_file$datapath, 
-                               stringsAsFactors = FALSE, 
-                               fileEncoding = "UTF-8",
-                               check.names = TRUE)
-      
+      participants <- read_csv(input$participants_file$datapath,
+                               locale = locale(encoding = "UTF-8"),
+                               show_col_types = FALSE)
+
       cat("Participants file columns:\n")
       print(colnames(participants))
-      
+
       find_column <- function(patterns) {
-        for (pattern in patterns) {
-          matches <- grep(pattern, colnames(participants), ignore.case = TRUE, value = TRUE)
-          if (length(matches) > 0) {
-            cat("Found column matching '", pattern, "': ", matches[1], "\n", sep = "")
-            return(matches[1])
-          }
+        result <- patterns %>%
+          map(~ str_subset(colnames(participants), regex(.x, ignore_case = TRUE))) %>%
+          detect(~ length(.x) > 0)
+
+        if (!is.null(result) && length(result) > 0) {
+          cat("Found column matching: ", result[1], "\n", sep = "")
+          return(result[1])
         }
-        return(NA)
+        return(NA_character_)
       }
       
       # Find group name column
@@ -362,41 +369,26 @@ server <- function(input, output, session) {
       
       cat("Found", length(member_id_cols), "member ID columns:\n")
       print(member_id_cols)
-      
-      # Pivot longer: create one row per participant
-      participants_long <- list()
-      
-      for (i in 1:nrow(participants)) {
-        group_name <- as.character(participants[[group_col]][i])
-        
-        # Extract all member IDs for this group
-        for (member_col in member_id_cols) {
-          member_id <- as.character(participants[[member_col]][i])
-          
-          # Only add if member ID is not empty
-          if (!is.na(member_id) && trimws(member_id) != "") {
-            participants_long[[length(participants_long) + 1]] <- data.frame(
-              Matrikelnummer = trimws(member_id),
-              Gruppenname = trimws(group_name),
-              stringsAsFactors = FALSE
-            )
-          }
-        }
-      }
-      
-      # Combine all rows
-      clean_participants <- do.call(rbind, participants_long)
-      
-      # Remove any remaining empty rows
-      clean_participants <- clean_participants[
-        !is.na(clean_participants$Matrikelnummer) & 
-          trimws(clean_participants$Matrikelnummer) != "" &
-          !is.na(clean_participants$Gruppenname) &
-          trimws(clean_participants$Gruppenname) != "", 
-      ]
-      
-      # Remove duplicates (in case a student appears multiple times)
-      clean_participants <- unique(clean_participants)
+
+      # Pivot longer: create one row per participant using tidyverse
+      clean_participants <- participants %>%
+        select(all_of(c(group_col, member_id_cols))) %>%
+        pivot_longer(
+          cols = all_of(member_id_cols),
+          names_to = "Member_Column",
+          values_to = "Matrikelnummer"
+        ) %>%
+        rename(Gruppenname = !!sym(group_col)) %>%
+        mutate(
+          Matrikelnummer = str_trim(as.character(Matrikelnummer)),
+          Gruppenname = str_trim(as.character(Gruppenname))
+        ) %>%
+        filter(
+          !is.na(Matrikelnummer), Matrikelnummer != "",
+          !is.na(Gruppenname), Gruppenname != ""
+        ) %>%
+        select(Matrikelnummer, Gruppenname) %>%
+        distinct()
       
       cat("Pivoted data: ", nrow(clean_participants), "participants from", 
           nrow(participants), "groups\n")
@@ -421,51 +413,48 @@ server <- function(input, output, session) {
     
     participants <- participants_data()
     quiz <- quiz_data()
-    
-    selected_quiz <- quiz[quiz$Selected == TRUE, ]
+
+    selected_quiz <- quiz %>%
+      filter(Selected == TRUE)
     
     if (nrow(selected_quiz) == 0) {
-      return(data.frame(
-        Matrikelnummer = participants$Matrikelnummer,
-        Gruppenname = participants$Gruppenname,
-        Score = 0,
-        Questions_Answered = 0
-      ))
+      return(participants %>%
+        mutate(Score = 0, Questions_Answered = 0))
     }
-    
-    scores <- lapply(1:nrow(participants), function(i) {
-      participant_group <- participants$Gruppenname[i]
-      
-      group_questions <- selected_quiz[selected_quiz$GroupName == participant_group, ]
-      
-      total_score <- sum(as.numeric(group_questions$Points), na.rm = TRUE)
-      num_questions <- nrow(group_questions)
-      
-      data.frame(
-        Matrikelnummer = participants$Matrikelnummer[i],
-        Gruppenname = participants$Gruppenname[i],
-        Score = total_score,
-        Questions_Answered = num_questions
+
+    # Calculate scores using tidyverse
+    group_scores <- selected_quiz %>%
+      group_by(GroupName) %>%
+      summarise(
+        Score = sum(as.numeric(Points), na.rm = TRUE),
+        Questions_Answered = n(),
+        .groups = "drop"
       )
-    })
-    
-    do.call(rbind, scores)
+
+    participants %>%
+      left_join(group_scores, by = c("Gruppenname" = "GroupName")) %>%
+      mutate(
+        Score = if_else(is.na(Score), 0, Score),
+        Questions_Answered = if_else(is.na(Questions_Answered), 0L, as.integer(Questions_Answered))
+      )
   })
   
   # Apply date filter
   observeEvent(input$apply_filter, {
     req(raw_data())
-    
-    data <- raw_data()
-    filtered <- data[data$SubmitDate >= input$start_date & 
-                       data$SubmitDate <= input$end_date, ]
-    
+
+    filtered <- raw_data() %>%
+      filter(
+        SubmitDate >= input$start_date,
+        SubmitDate <= input$end_date
+      ) %>%
+      mutate(Nr = row_number())
+
     if (nrow(filtered) == 0) {
       showNotification("No data in selected date range", type = "warning")
       return()
     }
-    
-    filtered$Nr <- seq_len(nrow(filtered))
+
     filtered_data(filtered)
     quiz_data(filtered)
     
@@ -544,14 +533,19 @@ server <- function(input, output, session) {
     req(quiz_data())
     
     data <- quiz_data()
-    error_count <- 0
-    warning_count <- 0
-    
-    for (i in 1:nrow(data)) {
-      issues <- validate_row(data[i, ])
-      if (any(unlist(issues) == "error")) error_count <- error_count + 1
-      if (any(unlist(issues) == "warning")) warning_count <- warning_count + 1
-    }
+
+    # Validate all rows using functional approach
+    validation_results <- data %>%
+      split(1:nrow(.)) %>%
+      map(validate_row)
+
+    error_count <- validation_results %>%
+      map_lgl(~ any(unlist(.) == "error")) %>%
+      sum()
+
+    warning_count <- validation_results %>%
+      map_lgl(~ any(unlist(.) == "warning")) %>%
+      sum()
     
     if (error_count > 0) {
       div(class = "alert alert-danger",
@@ -593,14 +587,16 @@ server <- function(input, output, session) {
   # Overview table
   output$overview_table <- renderDT({
     req(filtered_data())
-    
+
     data <- filtered_data()
-    
-    if (!all(c("Selected", "Nr", "SubmitDate", "GroupName", "Password", "Question") %in% colnames(data))) {
+
+    required_cols <- c("Selected", "Nr", "SubmitDate", "GroupName", "Password", "Question")
+    if (!all(required_cols %in% colnames(data))) {
       return(NULL)
     }
-    
-    overview <- data[, c("Selected", "Nr", "SubmitDate", "GroupName", "Password", "Question")]
+
+    overview <- data %>%
+      select(Selected, Nr, SubmitDate, GroupName, Password, Question)
     
     datatable(
       overview,
@@ -638,10 +634,11 @@ server <- function(input, output, session) {
   # Quiz data table
   output$data_table <- renderDT({
     req(quiz_data())
-    
+
     data <- quiz_data()
-    display_data <- data[, c("Selected", "Nr", "Question", "Answer_1", "Answer_2", 
-                             "Answer_3", "Answer_4", "Time_Limit", "Correct", "Points")]
+    display_data <- data %>%
+      select(Selected, Nr, Question, Answer_1, Answer_2,
+             Answer_3, Answer_4, Time_Limit, Correct, Points)
     
     dt <- datatable(
       display_data,
@@ -675,18 +672,28 @@ server <- function(input, output, session) {
       escape = FALSE
     )
     
-    for (i in 1:nrow(data)) {
-      issues <- validate_row(data[i, ])
-      
-      if (issues$question == "error") {
-        dt <- dt %>% formatStyle(3, target = 'row',
-                                 backgroundColor = styleEqual(i, '#ffcccc'))
-      } else if (issues$question == "warning") {
-        dt <- dt %>% formatStyle(3, target = 'row',
-                                 backgroundColor = styleEqual(i, '#fff3cd'))
-      }
-    }
-    
+    # Apply row validation styling using functional approach
+    validation_styles <- data %>%
+      split(1:nrow(.)) %>%
+      map(validate_row) %>%
+      imap(~ list(row = .y, status = .x$question))
+
+    dt <- validation_styles %>%
+      reduce(
+        function(dt_obj, item) {
+          if (item$status == "error") {
+            dt_obj %>% formatStyle(3, target = 'row',
+                                   backgroundColor = styleEqual(item$row, '#ffcccc'))
+          } else if (item$status == "warning") {
+            dt_obj %>% formatStyle(3, target = 'row',
+                                   backgroundColor = styleEqual(item$row, '#fff3cd'))
+          } else {
+            dt_obj
+          }
+        },
+        .init = dt
+      )
+
     dt
   })
   
@@ -788,13 +795,13 @@ server <- function(input, output, session) {
       
       tryCatch({
         data <- quiz_data()
-        
+
         cat("Total rows:", nrow(data), "\n")
         cat("Selected rows:", sum(data$Selected), "\n")
         cat("Export selected only:", input$export_selected_only, "\n")
-        
+
         if (input$export_selected_only) {
-          data <- data[data$Selected == TRUE, ]
+          data <- data %>% filter(Selected == TRUE)
           cat("After filtering:", nrow(data), "\n")
         }
         
@@ -803,14 +810,12 @@ server <- function(input, output, session) {
           return()
         }
         
-        has_errors <- FALSE
-        for (i in 1:nrow(data)) {
-          issues <- validate_row(data[i, ])
-          if (any(unlist(issues) == "error")) {
-            has_errors <- TRUE
-            break
-          }
-        }
+        # Check for validation errors using functional approach
+        has_errors <- data %>%
+          split(1:nrow(.)) %>%
+          map(validate_row) %>%
+          map(~ any(unlist(.) == "error")) %>%
+          any()
         
         if (has_errors) {
           showNotification("Warning: Some rows have validation errors.", 
