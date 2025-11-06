@@ -43,15 +43,15 @@ process_quiz_csv <- function(filepath) {
   logdebug("Column names: %s", str_c(colnames(df), collapse = ", "))
   
   # Find required columns
-  date_col <- find_column(df, c("Datum\\.Abgeschickt", "Date", "Submitted"))
+  date_col <- find_column(df, c("Datum.*Abgeschickt", "Date", "Submitted"))
   group_col <- find_column(df, c("Gruppennamen", "Group"))
   password_col <- find_column(df, c("Gruppenpasswort", "Password"))
-  question_col <- find_column(df, c("Frage\\.ein", "Question"))
-  answer_a_col <- find_column(df, c("Antwort\\.A", "Answer.*A"))
-  answer_b_col <- find_column(df, c("Antwort\\.B", "Answer.*B"))
-  answer_c_col <- find_column(df, c("Antwort\\.C", "Answer.*C"))
-  answer_d_col <- find_column(df, c("Antwort\\.D", "Answer.*D"))
-  correct_col <- find_column(df, c("korrekte\\.Antwort", "Correct"))
+  question_col <- find_column(df, c("Frage.*ein", "Question"))
+  answer_a_col <- find_column(df, c(".*\\[Antwort A\\]", "Antwort.*A", "Answer.*A"))
+  answer_b_col <- find_column(df, c(".*\\[Antwort B\\]", "Antwort.*B", "Answer.*B"))
+  answer_c_col <- find_column(df, c(".*\\[Antwort C\\]", "Antwort.*C", "Answer.*C"))
+  answer_d_col <- find_column(df, c(".*\\[Antwort D\\]", "Antwort.*D", "Answer.*D"))
+  correct_col <- find_column(df, c("korrekte.*Antwort", "Correct"))
   
   # Check for missing columns
   required_cols <- tibble(

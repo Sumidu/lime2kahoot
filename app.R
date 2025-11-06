@@ -237,15 +237,15 @@ server <- function(input, output, session) {
         return(NA_character_)
       }
       
-      date_col <- find_column(c("Datum\\.Abgeschickt", "Date", "Submitted"))
+      date_col <- find_column(c("Datum.*Abgeschickt", "Date", "Submitted"))
       group_col <- find_column(c("Gruppennamen", "Group"))
       password_col <- find_column(c("Gruppenpasswort", "Password"))
-      question_col <- find_column(c("Frage\\.ein", "Question"))
-      answer_a_col <- find_column(c("Antwort\\.A", "Answer.*A"))
-      answer_b_col <- find_column(c("Antwort\\.B", "Answer.*B"))
-      answer_c_col <- find_column(c("Antwort\\.C", "Answer.*C"))
-      answer_d_col <- find_column(c("Antwort\\.D", "Answer.*D"))
-      correct_col <- find_column(c("korrekte\\.Antwort", "Correct"))
+      question_col <- find_column(c("Frage.*ein", "Question"))
+      answer_a_col <- find_column(c(".*\\[Antwort A\\]", "Antwort.*A", "Answer.*A"))
+      answer_b_col <- find_column(c(".*\\[Antwort B\\]", "Antwort.*B", "Answer.*B"))
+      answer_c_col <- find_column(c(".*\\[Antwort C\\]", "Antwort.*C", "Answer.*C"))
+      answer_d_col <- find_column(c(".*\\[Antwort D\\]", "Antwort.*D", "Answer.*D"))
+      correct_col <- find_column(c("korrekte.*Antwort", "Correct"))
       
       required_cols <- tibble(
         name = c("Question", "Answer A", "Answer B", "Answer C", "Answer D", "Correct Answer"),
