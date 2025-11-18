@@ -262,7 +262,7 @@ server <- function(input, output, session) {
         Answer_2 = as.character(df[[answer_b_col]]),
         Answer_3 = as.character(df[[answer_c_col]]),
         Answer_4 = as.character(df[[answer_d_col]]),
-        Time_Limit = rep(60, nrow(df)),
+        Time_Limit = rep(30, nrow(df)),
         Correct = as.character(df[[correct_col]]),
         Points = rep(1, nrow(df)),
         stringsAsFactors = FALSE
