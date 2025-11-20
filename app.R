@@ -199,90 +199,29 @@ server <- function(input, output, session) {
   filtered_data <- reactiveVal(NULL)
   participants_data <- reactiveVal(NULL)
   
+  # Indicate if data is loaded  
   output$data_loaded <- reactive({
+    # we achieve this by checking if raw_data is not NULL
     !is.null(raw_data())
   })
+  
   outputOptions(output, "data_loaded", suspendWhenHidden = FALSE)
   
   # Process uploaded CSV
   observeEvent(input$csv_file, {
     req(input$csv_file)
     
+    # we read the CSV file
     tryCatch({
-      df <- read.csv(input$csv_file$datapath, stringsAsFactors = FALSE, 
-                     fileEncoding = "UTF-8", check.names = TRUE)
       
-      find_column <- function(patterns) {
-        for (pattern in patterns) {
-          matches <- grep(pattern, colnames(df), ignore.case = TRUE, value = TRUE)
-          if (length(matches) > 0) return(matches[1])
-        }
-        return(NA)
-      }
+      # old approach
+
+      #df <- read.csv(input$csv_file$datapath, stringsAsFactors = FALSE, 
+      #               fileEncoding = "UTF-8", check.names = TRUE)
       
-      date_col <- find_column(c("Datum\\.Abgeschickt", "Date", "Submitted"))
-      group_col <- find_column(c("Gruppennamen", "Group"))
-      password_col <- find_column(c("Gruppenpasswort", "Password"))
-      question_col <- find_column(c("Frage\\.ein", "Question"))
-      answer_a_col <- find_column(c("Antwort\\.A", "Answer.*A"))
-      answer_b_col <- find_column(c("Antwort\\.B", "Answer.*B"))
-      answer_c_col <- find_column(c("Antwort\\.C", "Answer.*C"))
-      answer_d_col <- find_column(c("Antwort\\.D", "Answer.*D"))
-      correct_col <- find_column(c("korrekte\\.Antwort", "Correct"))
+      # new approach
+      clean_data <- process_quiz_csv(input$csv_file$datapath)
       
-      missing_cols <- c()
-      if (is.na(question_col)) missing_cols <- c(missing_cols, "Question")
-      if (is.na(answer_a_col)) missing_cols <- c(missing_cols, "Answer A")
-      if (is.na(answer_b_col)) missing_cols <- c(missing_cols, "Answer B")
-      if (is.na(answer_c_col)) missing_cols <- c(missing_cols, "Answer C")
-      if (is.na(answer_d_col)) missing_cols <- c(missing_cols, "Answer D")
-      if (is.na(correct_col)) missing_cols <- c(missing_cols, "Correct Answer")
-      
-      if (length(missing_cols) > 0) {
-        stop(paste("Could not find columns:", paste(missing_cols, collapse = ", ")))
-      }
-      
-      if (!is.na(date_col)) {
-        tryCatch({
-          df$ParsedDate <- as.Date(parse_date_time(df[[date_col]], 
-                                                   orders = c("ymd HMS", "dmy HMS", "mdy HMS")))
-        }, error = function(e) {
-          df$ParsedDate <- Sys.Date()
-        })
-      } else {
-        df$ParsedDate <- Sys.Date()
-      }
-      
-      clean_data <- data.frame(
-        SubmitDate = df$ParsedDate,
-        GroupName = if (!is.na(group_col)) as.character(df[[group_col]]) else "",
-        Password = if (!is.na(password_col)) as.character(df[[password_col]]) else "",
-        Question = as.character(df[[question_col]]),
-        Answer_1 = as.character(df[[answer_a_col]]),
-        Answer_2 = as.character(df[[answer_b_col]]),
-        Answer_3 = as.character(df[[answer_c_col]]),
-        Answer_4 = as.character(df[[answer_d_col]]),
-        Time_Limit = rep(30, nrow(df)),
-        Correct = as.character(df[[correct_col]]),
-        Points = rep(1, nrow(df)),
-        stringsAsFactors = FALSE
-      )
-      
-      clean_data <- clean_data[!is.na(clean_data$Question) & 
-                                 trimws(clean_data$Question) != "", ]
-      
-      if (nrow(clean_data) == 0) {
-        stop("No valid questions found in the CSV file")
-      }
-      
-      clean_data$Correct <- gsub("A", "1", clean_data$Correct)
-      clean_data$Correct <- gsub("B", "2", clean_data$Correct)
-      clean_data$Correct <- gsub("C", "3", clean_data$Correct)
-      clean_data$Correct <- gsub("D", "4", clean_data$Correct)
-      
-      clean_data[is.na(clean_data)] <- ""
-      
-      clean_data$Selected <- TRUE
       clean_data$Nr <- seq_len(nrow(clean_data))
       
       raw_data(clean_data)
@@ -311,93 +250,8 @@ server <- function(input, output, session) {
     req(input$participants_file)
     
     tryCatch({
-      participants <- read.csv(input$participants_file$datapath, 
-                               stringsAsFactors = FALSE, 
-                               fileEncoding = "UTF-8",
-                               check.names = TRUE)
-      
-      cat("Participants file columns:\n")
-      print(colnames(participants))
-      
-      find_column <- function(patterns) {
-        for (pattern in patterns) {
-          matches <- grep(pattern, colnames(participants), ignore.case = TRUE, value = TRUE)
-          if (length(matches) > 0) {
-            cat("Found column matching '", pattern, "': ", matches[1], "\n", sep = "")
-            return(matches[1])
-          }
-        }
-        return(NA)
-      }
-      
-      # Find group name column
-      group_col <- find_column(c("Group\\.Name", "GroupName", "Gruppenname", 
-                                 "gruppe", "Group", "Team"))
-      
-      if (is.na(group_col)) {
-        available_cols <- paste(colnames(participants), collapse = ", ")
-        stop(paste("Could not find group name column. Looking for patterns like: Group Name, GroupName, Gruppenname.\n\nAvailable columns:", available_cols))
-      }
-      
-      cat("Using Group Name column:", group_col, "\n")
-      
-      # Find all member ID columns (Member 1 ID Number, Member 2 ID Number, etc.)
-      member_id_cols <- grep("Member.*ID.*Number|Member.*ID|Student.*ID", 
-                             colnames(participants), 
-                             ignore.case = TRUE, 
-                             value = TRUE)
-      
-      if (length(member_id_cols) == 0) {
-        # Try alternative patterns
-        member_id_cols <- grep("Mitglied|Member|Student|Teilnehmer", 
-                               colnames(participants), 
-                               ignore.case = TRUE, 
-                               value = TRUE)
-      }
-      
-      if (length(member_id_cols) == 0) {
-        available_cols <- paste(colnames(participants), collapse = ", ")
-        stop(paste("Could not find member ID columns. Looking for patterns like: Member 1 ID Number, Member 2 ID Number.\n\nAvailable columns:", available_cols))
-      }
-      
-      cat("Found", length(member_id_cols), "member ID columns:\n")
-      print(member_id_cols)
-      
-      # Pivot longer: create one row per participant
-      participants_long <- list()
-      
-      for (i in 1:nrow(participants)) {
-        group_name <- as.character(participants[[group_col]][i])
-        
-        # Extract all member IDs for this group
-        for (member_col in member_id_cols) {
-          member_id <- as.character(participants[[member_col]][i])
-          
-          # Only add if member ID is not empty
-          if (!is.na(member_id) && trimws(member_id) != "") {
-            participants_long[[length(participants_long) + 1]] <- data.frame(
-              Matrikelnummer = trimws(member_id),
-              Gruppenname = trimws(group_name),
-              stringsAsFactors = FALSE
-            )
-          }
-        }
-      }
-      
-      # Combine all rows
-      clean_participants <- do.call(rbind, participants_long)
-      
-      # Remove any remaining empty rows
-      clean_participants <- clean_participants[
-        !is.na(clean_participants$Matrikelnummer) & 
-          trimws(clean_participants$Matrikelnummer) != "" &
-          !is.na(clean_participants$Gruppenname) &
-          trimws(clean_participants$Gruppenname) != "", 
-      ]
-      
-      # Remove duplicates (in case a student appears multiple times)
-      clean_participants <- unique(clean_participants)
-      
+      clean_participants <- process_participants_csv(input$participants_file$datapath)
+
       cat("Pivoted data: ", nrow(clean_participants), "participants from", 
           nrow(participants), "groups\n")
       cat("Sample:\n")
@@ -424,6 +278,7 @@ server <- function(input, output, session) {
     
     selected_quiz <- quiz[quiz$Selected == TRUE, ]
     
+    # Handle case with no selected questions
     if (nrow(selected_quiz) == 0) {
       return(data.frame(
         Matrikelnummer = participants$Matrikelnummer,
@@ -433,6 +288,7 @@ server <- function(input, output, session) {
       ))
     }
     
+    # Calculate scores
     scores <- lapply(1:nrow(participants), function(i) {
       participant_group <- participants$Gruppenname[i]
       

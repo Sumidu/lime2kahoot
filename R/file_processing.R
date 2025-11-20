@@ -111,11 +111,14 @@ process_participants_csv <- function(filepath) {
   # filepath <- "data/groups.csv" # for debugging
   cat("\n=== Processing Participants CSV ===\n")
   
-  participants <- readr::read_csv(filepath)
+  participants <- readr::read_csv(filepath,skip=1)
   # remove rows with zero participants (Group Size column is 0)
   participants %>% filter(`Group Size` != 0) %>% 
     select(-c(`Group Description`, starts_with("Assigned"))) %>% 
     select(c(`Group Name`, ends_with("ID Number"))) %>% 
+    rename(Gruppenname = `Group Name`) %>%
+    # pick only numbers and decimals (first match)
+    mutate(Gruppenname = stringr::str_extract(Gruppenname, "[0-9]*\\.[0-9]*")) %>%
     pivot_longer(
       cols = starts_with("Member") | starts_with("Student"),
       names_to = "Member_Column",
