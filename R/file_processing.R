@@ -7,6 +7,22 @@ library(tidyr)
 library(readr)
 library(lubridate)
 
+
+replace_group_short_name <- function(long_name){
+  ifelse(
+    long_name == "lulemi",
+    "2.9",
+    stringr::str_extract(long_name, "[0-9]*\\.[0-9]*")
+  )
+}
+
+if(FALSE){
+  replace_group_short_name("Gruppe 12.34 - Testgruppe")
+  replace_group_short_name("lulemi")
+  replace_group_short_name(c("lulemi", "Gruppe 12.34 - Testgruppe"))
+}
+
+
 # Function to find column by pattern matching
 find_column <- function(df, patterns) {
   for (pattern in patterns) {
@@ -70,6 +86,7 @@ process_quiz_csv <- function(filepath) {
   clean_data <- data.frame(
     SubmitDate = df$ParsedDate,
     GroupName = if (!is.na(group_col)) as.character(df[[group_col]]) else "",
+    GroupShortName = if (!is.na(group_col)) replace_group_short_name(as.character(df[[group_col]])) else "",
     Password = if (!is.na(password_col)) as.character(df[[password_col]]) else "",
     Question = as.character(df[[question_col]]),
     Answer_1 = as.character(df[[answer_a_col]]),
@@ -103,7 +120,7 @@ process_quiz_csv <- function(filepath) {
   cat("\nSample data:\n")
   print(head(clean_data[, c("Nr", "GroupName", "Question", "Points")], 3))
   
-  return(clean_data)
+  clean_data %>% filter(!is.na(SubmitDate)) %>% return()
 }
 
 # Process participants CSV (wide format with multiple member columns)
@@ -111,14 +128,14 @@ process_participants_csv <- function(filepath) {
   # filepath <- "data/groups.csv" # for debugging
   cat("\n=== Processing Participants CSV ===\n")
   
-  participants <- readr::read_csv(filepath,skip=1)
+  participants <- suppressWarnings(readr::read_csv(filepath, skip=1))
   # remove rows with zero participants (Group Size column is 0)
   participants %>% filter(`Group Size` != 0) %>% 
     select(-c(`Group Description`, starts_with("Assigned"))) %>% 
     select(c(`Group Name`, ends_with("ID Number"))) %>% 
     rename(Gruppenname = `Group Name`) %>%
     # pick only numbers and decimals (first match)
-    mutate(Gruppenname = stringr::str_extract(Gruppenname, "[0-9]*\\.[0-9]*")) %>%
+    mutate(Gruppenname = replace_group_short_name(Gruppenname)) %>%
     pivot_longer(
       cols = starts_with("Member") | starts_with("Student"),
       names_to = "Member_Column",

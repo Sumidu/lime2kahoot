@@ -4,6 +4,7 @@ library(openxlsx)
 library(dplyr)
 library(lubridate)
 
+# UI START ----
 ui <- fluidPage(
   titlePanel("LimeSurvey to Kahoot Quiz Converter"),
   
@@ -85,7 +86,10 @@ ui <- fluidPage(
         dateInput("end_date", "End Date:",
                   value = Sys.Date(),
                   max = Sys.Date()),
-        actionButton("apply_filter", "Apply Date Filter", 
+        selectizeInput("selected_groups", "Select Groups to Include:",
+                       choices = NULL,
+                       multiple = TRUE),
+        actionButton("apply_filter", "Apply Filter", 
                      class = "btn-primary btn-sm"),
         hr(),
         h5("Export"),
@@ -143,57 +147,16 @@ ui <- fluidPage(
                    )
                  )
         ),
-        tabPanel("Help",
-                 br(),
-                 h4("About this app"),
-                 p("This app converts quiz questions from LimeSurvey CSV format to Kahoot Excel template format, and calculates participant grades."),
-                 h4("Features:"),
-                 tags$ul(
-                   tags$li(strong("Data Overview tab:"), " Review submission dates, group names, and passwords."),
-                   tags$li(strong("Quiz Questions tab:"), " Edit questions and answers. Assign point values (0, 0.5, or 1)."),
-                   tags$li(strong("Grading tab:"), " Upload participant information and calculate scores based on group performance."),
-                   tags$li(strong("Date Filtering:"), " Focus on submissions from a specific date range."),
-                   tags$li(strong("Row Selection:"), " Choose which questions to include in export and grading.")
-                 ),
-                 h4("Grading Workflow:"),
-                 tags$ol(
-                   tags$li("Upload LimeSurvey CSV with quiz questions"),
-                   tags$li("Filter by date and review submissions"),
-                   tags$li("Select questions to grade (checkboxes)"),
-                   tags$li("Assign point values in Points column"),
-                   tags$li("Go to Grading tab and upload participants CSV"),
-                   tags$li("Review calculated scores"),
-                   tags$li("Download grades CSV")
-                 ),
-                 h4("Participants CSV Format:"),
-                 p("The participants CSV should contain at least two columns:"),
-                 tags$ul(
-                   tags$li(strong("Matrikelnummer:"), " Student ID"),
-                   tags$li(strong("Gruppenname:"), " Group name (must match group names in quiz data)")
-                 ),
-                 h4("Kahoot Requirements:"),
-                 tags$ul(
-                   tags$li("Questions: max 120 characters"),
-                   tags$li("Answers: max 75 characters each"),
-                   tags$li("Time limit: 5, 10, 20, 30, 60, 90, 120, or 240 seconds"),
-                   tags$li("Correct answer: 1, 2, 3, or 4 (or combinations like '1,2')"),
-                   tags$li("Points: 0, 0.5, or 1 (for grading only)")
-                 ),
-                 h4("Color Coding:"),
-                 tags$ul(
-                   tags$li(tags$span(style = "background-color: #d4edda; padding: 2px 5px;", "Green"), " - Valid"),
-                   tags$li(tags$span(style = "background-color: #fff3cd; padding: 2px 5px;", "Yellow"), " - Warning"),
-                   tags$li(tags$span(style = "background-color: #ffcccc; padding: 2px 5px;", "Red"), " - Error")
-                 )
-        )
+        help_ui()
       )
     )
   )
 )
+# UI END ----
 
 server <- function(input, output, session) {
   
-  # Reactive values
+  # Reactive values ----
   raw_data <- reactiveVal(NULL)
   quiz_data <- reactiveVal(NULL)
   filtered_data <- reactiveVal(NULL)
@@ -207,7 +170,7 @@ server <- function(input, output, session) {
   
   outputOptions(output, "data_loaded", suspendWhenHidden = FALSE)
   
-  # Process uploaded CSV
+  # Process uploaded CSV file ----
   observeEvent(input$csv_file, {
     req(input$csv_file)
     
@@ -229,6 +192,11 @@ server <- function(input, output, session) {
       updateDateInput(session, "start_date", value = Sys.Date() - 7)
       updateDateInput(session, "end_date", value = Sys.Date())
       
+      updateSelectizeInput(session, "selected_groups", 
+                           choices = unique(clean_data$GroupShortName), 
+                           selected = unique(clean_data$GroupShortName)
+                           )
+      
       filtered <- clean_data[clean_data$SubmitDate >= (Sys.Date() - 7) & 
                                clean_data$SubmitDate <= Sys.Date(), ]
       filtered$Nr <- seq_len(nrow(filtered))
@@ -245,7 +213,7 @@ server <- function(input, output, session) {
     })
   })
   
-  # Process participants file
+  # Process participants file ----
   observeEvent(input$participants_file, {
     req(input$participants_file)
     
@@ -269,7 +237,7 @@ server <- function(input, output, session) {
     })
   })
   
-  # Calculate scores for participants
+  # Calculate scores for participants ----
   participant_scores <- reactive({
     req(participants_data(), quiz_data())
     
@@ -277,7 +245,6 @@ server <- function(input, output, session) {
     quiz <- quiz_data()
     
     selected_quiz <- quiz[quiz$Selected == TRUE, ]
-    
     # Handle case with no selected questions
     if (nrow(selected_quiz) == 0) {
       return(data.frame(
@@ -288,13 +255,22 @@ server <- function(input, output, session) {
       ))
     }
     
-    # Calculate scores
+    # Calculate scores ----
     scores <- lapply(1:nrow(participants), function(i) {
+      # get group name (is already short version)
       participant_group <- participants$Gruppenname[i]
+      cat("Processing participant", participants$Matrikelnummer[i], 
+          "in group", participant_group, "\n")
       
-      group_questions <- selected_quiz[selected_quiz$GroupName == participant_group, ]
+      # find all questions that are selected and belong to this group
       
+      group_questions <- selected_quiz[selected_quiz$GroupShortName == participant_group, ]
+      #cat("----")
+      #print(group_questions)
+      
+      # add the points marked down
       total_score <- sum(as.numeric(group_questions$Points), na.rm = TRUE)
+      # count the rows
       num_questions <- nrow(group_questions)
       
       data.frame(
@@ -308,13 +284,14 @@ server <- function(input, output, session) {
     do.call(rbind, scores)
   })
   
-  # Apply date filter
+  # Apply date filter ----
   observeEvent(input$apply_filter, {
     req(raw_data())
     
     data <- raw_data()
     filtered <- data[data$SubmitDate >= input$start_date & 
-                       data$SubmitDate <= input$end_date, ]
+                       data$SubmitDate <= input$end_date &
+                       data$GroupShortName %in% input$selected_groups, ]
     
     if (nrow(filtered) == 0) {
       showNotification("No data in selected date range", type = "warning")
@@ -329,7 +306,7 @@ server <- function(input, output, session) {
                      type = "message", duration = 2)
   })
   
-  # Validation function
+  # Validation function ----
   validate_row <- function(row) {
     issues <- list()
     
@@ -379,7 +356,7 @@ server <- function(input, output, session) {
     return(issues)
   }
   
-  # Status message
+  # Status message ----
   output$status_message <- renderUI({
     if (is.null(filtered_data())) {
       div(class = "alert alert-info",
@@ -395,7 +372,7 @@ server <- function(input, output, session) {
     }
   })
   
-  # Validation summary
+  # Validation summary ----
   output$validation_summary <- renderUI({
     req(quiz_data())
     
@@ -424,7 +401,7 @@ server <- function(input, output, session) {
     }
   })
   
-  # Grading summary
+  # Grading summary ----
   output$grading_summary <- renderUI({
     if (is.null(participants_data())) {
       div(class = "alert alert-info",
@@ -446,23 +423,23 @@ server <- function(input, output, session) {
     }
   })
   
-  # Overview table
+  # Overview table ----
   output$overview_table <- renderDT({
     req(filtered_data())
     
     data <- filtered_data()
     
-    if (!all(c("Selected", "Nr", "SubmitDate", "GroupName", "Password", "Question") %in% colnames(data))) {
+    if (!all(c("Selected", "Nr", "SubmitDate", "GroupName", "GroupShortName", "Password", "Question") %in% colnames(data))) {
       return(NULL)
     }
     
-    overview <- data[, c("Selected", "Nr", "SubmitDate", "GroupName", "Password", "Question")]
+    overview <- data[, c("Selected", "Nr", "SubmitDate", "GroupName", "GroupShortName", "Password", "Question")]
     
     datatable(
       overview,
       editable = list(target = "cell", disable = list(columns = c(0, 1, 2))),
       options = list(
-        pageLength = 15,
+        pageLength = 25,
         scrollX = TRUE,
         columnDefs = list(
           list(className = 'dt-center', targets = 0:2),
@@ -491,7 +468,7 @@ server <- function(input, output, session) {
     )
   })
   
-  # Quiz data table
+  # Quiz data table ----
   output$data_table <- renderDT({
     req(quiz_data())
     
@@ -503,7 +480,7 @@ server <- function(input, output, session) {
       display_data,
       editable = list(target = "cell", disable = list(columns = c(0, 1))),
       options = list(
-        pageLength = 15,
+        pageLength = 25,
         scrollX = TRUE,
         columnDefs = list(
           list(width = '40px', targets = 0),
@@ -546,7 +523,7 @@ server <- function(input, output, session) {
     dt
   })
   
-  # Grading table
+  # Grading table ----
   output$grading_table <- renderDT({
     req(participant_scores())
     
@@ -555,7 +532,7 @@ server <- function(input, output, session) {
     datatable(
       scores,
       options = list(
-        pageLength = 25,
+        pageLength = 55,
         scrollX = TRUE,
         order = list(list(2, 'desc'))
       ),
@@ -594,7 +571,7 @@ server <- function(input, output, session) {
     cat("Selected count:", sum(data$Selected), "\n")
   })
   
-  # Handle cell edits
+  # Handle cell edits ----
   observeEvent(input$overview_table_cell_edit, {
     info <- input$overview_table_cell_edit
     data <- filtered_data()
@@ -634,7 +611,7 @@ server <- function(input, output, session) {
     filtered_data(data)
   })
   
-  # Download handlers
+  # Download handlers ----
   output$download_excel <- downloadHandler(
     filename = function() {
       paste0("kahoot_quiz_", format(Sys.Date(), "%Y%m%d"), ".xlsx")
@@ -731,6 +708,7 @@ server <- function(input, output, session) {
     }
   )
   
+  # Grades download ----
   output$download_grades <- downloadHandler(
     filename = function() {
       paste0("grades_", format(Sys.Date(), "%Y%m%d"), ".csv")
