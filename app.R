@@ -716,13 +716,14 @@ server <- function(input, output, session) {
   # Grades download ----
   output$download_grades <- downloadHandler(
     filename = function() {
-      paste0("grades_", format(Sys.Date(), "%Y%m%d"), ".csv")
+      paste0(format(Sys.Date(), "%Y%m%d"),"_grades_from", format(input$start_date, "%Y%m%d"), ".csv")
     },
     content = function(file) {
       req(participant_scores())
       
-      scores <- participant_scores()
+      scores <- participant_scores() %>% filter(Questions_Answered > 0)
       
+      # TODO: export a column per week
       export_data <- data.frame(
         Matrikelnummer = scores$Matrikelnummer,
         Score = scores$Score
@@ -730,7 +731,9 @@ server <- function(input, output, session) {
       
       write.csv(export_data, file, row.names = FALSE, fileEncoding = "UTF-8")
       
-      showNotification("Grades CSV downloaded!", type = "message", duration = 2)
+      message <- paste("CSV file created with", nrow(export_data), "participants' grades!")
+      
+      showNotification(message, type = "message", duration = 2)
     }
   )
 }
