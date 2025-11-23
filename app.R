@@ -71,6 +71,7 @@ ui <- fluidPage(
   ),
   
   sidebarLayout(
+    ## Sidebar Panel ----
     sidebarPanel(
       width = 3,
       fileInput("csv_file", "Upload LimeSurvey CSV",
@@ -112,6 +113,7 @@ ui <- fluidPage(
     
     mainPanel(
       width = 9,
+      ### Data Overview Panel ----
       tabsetPanel(
         tabPanel("Data Overview",
                  br(),
@@ -119,12 +121,14 @@ ui <- fluidPage(
                  br(),
                  DTOutput("overview_table")
         ),
+        ### Quiz Questions Panel ----
         tabPanel("Quiz Questions",
                  br(),
                  uiOutput("validation_summary"),
                  br(),
                  DTOutput("data_table")
         ),
+        ### Grading Panel ----
         tabPanel("Grading",
                  br(),
                  fluidRow(
@@ -147,6 +151,7 @@ ui <- fluidPage(
                    )
                  )
         ),
+        ### Help Panel ----
         help_ui()
       )
     )
