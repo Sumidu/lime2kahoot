@@ -128,7 +128,14 @@ process_participants_csv <- function(filepath) {
   # filepath <- "data/groups.csv" # for debugging
   cat("\n=== Processing Participants CSV ===\n")
   
-  participants <- suppressWarnings(readr::read_csv(filepath, skip=1))
+  # test if skip = 0 or skip = 1
+  participants <- suppressWarnings(readr::read_csv(filepath, skip=0))
+  if(all(is.na(participants$`Group Name`))){
+    cat("First row seems to be header, re-reading with skip=1\n")
+    participants <- suppressWarnings(readr::read_csv(filepath, skip=1))
+  }
+  
+  
   # remove rows with zero participants (Group Size column is 0)
   participants %>% filter(`Group Size` != 0) %>% 
     select(-c(`Group Description`, starts_with("Assigned"))) %>% 
