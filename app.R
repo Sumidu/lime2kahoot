@@ -226,14 +226,14 @@ server <- function(input, output, session) {
       clean_participants <- process_participants_csv(input$participants_file$datapath)
 
       cat("Pivoted data: ", nrow(clean_participants), "participants from", 
-          nrow(participants), "groups\n")
+          clean_participants$Gruppenname %>% unique() %>% length(), "groups\n")
       cat("Sample:\n")
       print(head(clean_participants, 5))
       
       participants_data(clean_participants)
       
       showNotification(paste("Loaded", nrow(clean_participants), "participants from", 
-                             nrow(participants), "groups"), 
+                             clean_participants$Gruppenname %>% unique() %>% length(), "groups"), 
                        type = "message", duration = 3)
       
     }, error = function(e) {
